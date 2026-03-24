@@ -1,0 +1,19 @@
+{
+  "name": "aptos-ai",
+  "owner": {
+    "name": "Aptos Labs",
+    "email": "opensource@aptoslabs.com"
+  },
+  "metadata": {
+    "description": "Claude Code plugins and skills for Aptos development"
+  },
+  "plugins": [
+    {
+      "name": "move-flow",
+      "source": "./plugins/move-flow",
+      "description": "Move smart contract development for Aptos — MCP tools, edit hooks, agents, and skills for the Move language and Move Prover",
+      "keywords": ["move", "aptos", "smart-contracts", "prover"],
+      "homepage": "https://github.com/aptos-labs/aptos-core/tree/main/aptos-move/flow"
+    }
+  ]
+}
