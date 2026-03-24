@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "move-flow": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "set -f; set -- ${MOVE_FLOW_ARGS:-mcp}; exec \"${MOVE_FLOW:-move-flow}\" \"$@\""
+      ]
+    }
+  }
+}
