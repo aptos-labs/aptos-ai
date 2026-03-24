@@ -1,0 +1,9 @@
+{
+  "name": "move-flow",
+  "description": "Move smart contract development for Aptos",
+  "version": "1.0.0",
+  "author": {
+    "name": "Aptos Labs",
+    "url": "https://github.com/aptos-labs/aptos-core/tree/main/aptos-move/flow"
+  }
+}
