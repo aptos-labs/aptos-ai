@@ -14,13 +14,16 @@ platforms planned.
 
 ### Prerequisites
 
-The `move-flow` binary must be on your `$PATH`. Install it from
-[aptos-core](https://github.com/aptos-labs/aptos-core):
+The `move-flow` binary must be on your `$PATH`. Install it from a local
+[aptos-core](https://github.com/aptos-labs/aptos-core) checkout:
 
 ```bash
-cargo install --git https://github.com/aptos-labs/aptos-core.git \
-  --locked --profile ci aptos-move-flow
+cd aptos-core
+cargo install --path aptos-move/flow --locked --profile ci
 ```
+
+> **Note:** `aptos update move-flow` will be available in the future but is not
+> yet supported.
 
 ### Install the Marketplace
 
