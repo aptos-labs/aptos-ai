@@ -31,7 +31,7 @@ cargo install --path aptos-move/flow --locked --profile ci
 /plugin marketplace add aptos-labs/aptos-ai
 ```
 
-### Install MoveFlow
+### Start Flowing
 
 ```
 /plugin install move-flow@aptos-ai
