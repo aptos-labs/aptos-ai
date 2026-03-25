@@ -558,7 +558,7 @@ and apply the timeout resolution strategies described above. As a timeout value,
 
 
 
-## Spec Inference
+## Spec Inference v2
 
 
 
@@ -656,23 +656,20 @@ helper's declaration.
 
 
 
-### Inference Workflow
 
-**Phase 1 — Initial WP run.** Run the WP tool on the functions matching the `filter`
-to get raw inferred specifications. Loops without invariants will produce
-`[inferred = vacuous]` conditions — this is expected.
+### Inference Workflow v2
 
-**Phase 2 — Synthesize loop invariants.** For every loop lacking an invariant
-in a function matching the `filter`, add one marked `[inferred]`. Define
-recursive spec helper functions as needed. Remove all `[inferred = *]` conditions before 
-proceeding. You MUST avoid the Common Pitfalls in Spec Expressions described above.
 
-**Phase 3 — Re-run WP.** Re-run the WP tool on the same scope. With invariants
-in place, the tool should now produce complete (non-vacuous) specifications.
 
-**Phase 4 — Simplify and verify.** Simplify the inferred specifications
-described above (remove redundancy, strengthen where obvious). Then verify the
-result using the verification workflow described above.
+**Phase 1 — Synthesize loop invariants.** 
+For every loop lacking an invariant in a function matching the `filter`, add 
+one marked as `[inferred]`. Define recursive spec helper functions as needed. You
+MUST avoid the Common Pitfalls in Spec Expressions described above.
+
+**Phase 2 — Run WP.** With invariants in place, run the WP tool with the `filter`.
+
+**Phase 3 — Simplify and verify functions matching the `filter`.** Simplify the inferred 
+specifications described above. Then verify the result using the verification workflow.
 
 
 
