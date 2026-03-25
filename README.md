@@ -1,4 +1,4 @@
-# Aptos AI
+# Aptos AI (BETA)
 
 Plugins and integrations for AI coding assistants working with the Aptos
 blockchain and the Move language. Currently supports Claude Code, with other
