@@ -1,0 +1,358 @@
+name: Release MoveFlow Binary
+
+on:
+  schedule:
+    # Poll aptos-core for new move-flow-v* tags every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. move-flow-v0.1.0). Leave empty to auto-detect latest."
+        required: false
+        type: string
+      dry_run:
+        description: "Build artifacts without creating a release"
+        required: false
+        type: boolean
+        default: false
+      skip_checks:
+        description: "Skip duplicate release check"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  APTOS_CORE_REPO: aptos-labs/aptos-core
+  BINARY_NAME: move-flow
+  CRATE_NAME: aptos-move-flow
+  BUILD_PROFILE: tool
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Resolve the tag and decide whether to build
+  # ---------------------------------------------------------------------------
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SKIP_CHECKS: ${{ inputs.skip_checks }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Determine the tag to use
+          if [[ -n "$INPUT_TAG" ]]; then
+            # Validate tag format to prevent injection
+            if ! echo "$INPUT_TAG" | grep -qE '^move-flow-v[0-9a-zA-Z._-]+$'; then
+              echo "::error::Invalid tag format: must match move-flow-v<version>"
+              exit 1
+            fi
+            TAG="$INPUT_TAG"
+            echo "Using manually specified tag: $TAG"
+          else
+            echo "Querying $APTOS_CORE_REPO for latest move-flow-v* release..."
+            TAG=$(gh api "repos/$APTOS_CORE_REPO/releases" \
+              --paginate --jq '.[].tag_name' \
+              | grep '^move-flow-v' \
+              | head -n 1 || true)
+
+            if [[ -z "$TAG" ]]; then
+              echo "No move-flow-v* release found in $APTOS_CORE_REPO"
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Found latest upstream tag: $TAG"
+          fi
+
+          # Extract version (strip 'move-flow-v' prefix)
+          VERSION="${TAG#move-flow-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Check if we already have a release for this tag
+          if [[ "$INPUT_SKIP_CHECKS" == "true" ]]; then
+            echo "Skipping duplicate check (skip_checks=true)"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          EXISTING=$(gh api "repos/$THIS_REPO/releases/tags/$TAG" \
+            --jq '.tag_name' 2>/dev/null || true)
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Release $TAG already exists in this repo — skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing release for $TAG — will build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Cross-platform build matrix (5 platforms)
+  # ---------------------------------------------------------------------------
+  build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux ARM64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: macOS x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - name: macOS ARM64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - name: Windows x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout aptos-core at tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.APTOS_CORE_REPO }}
+          ref: ${{ needs.check.outputs.tag }}
+          path: aptos-core
+
+      # --- sccache (non-Windows only) ---
+      - name: Set up sccache (Shelby)
+        if: runner.os != 'Windows'
+        uses: gregnazario/shelby-sccache/action@main
+        with:
+          aptos-private-key: ${{ secrets.APTOS_PRIVATE_KEY }}
+          shelby-api-key: ${{ secrets.SHELBY_API_KEY }}
+
+      - name: Verify sccache proxy
+        if: runner.os != 'Windows'
+        run: |
+          if curl -sf http://localhost:9000/ > /dev/null 2>&1; then
+            echo "Shelby proxy is running"
+          else
+            echo "::warning::Shelby proxy not responding, disabling sccache"
+            echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          fi
+
+      # --- Rust setup (platform-specific) ---
+      - name: Set up Rust (non-Windows)
+        if: runner.os != 'Windows'
+        uses: aptos-labs/aptos-core/.github/actions/cli-rust-setup@main
+        with:
+          working-directory: aptos-core
+
+      - name: Set up Rust (Windows)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
+      - name: Rust cache (Windows)
+        if: runner.os == 'Windows'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aptos-core
+
+      # --- Build ---
+      - name: Build binary (Unix)
+        if: runner.os != 'Windows'
+        working-directory: aptos-core
+        run: |
+          bash scripts/binary_release/build_binary_release.sh \
+            "$BINARY_NAME" \
+            "$CRATE_NAME" \
+            "$BUILD_PROFILE" \
+            "$VERSION"
+
+      - name: Build binary (Windows)
+        if: runner.os == 'Windows'
+        working-directory: aptos-core
+        shell: pwsh
+        run: |
+          scripts/binary_release/build_binary_release.ps1 `
+            -BinaryName "$env:BINARY_NAME" `
+            -CrateName "$env:CRATE_NAME" `
+            -BuildProfile "$env:BUILD_PROFILE" `
+            -Version "$env:VERSION"
+
+      # --- Package & checksum ---
+      - name: Package artifact (Unix)
+        if: runner.os != 'Windows'
+        working-directory: aptos-core
+        run: |
+          ARCHIVE="${BINARY_NAME}-v${VERSION}-${TARGET}.zip"
+          STAGING="${BINARY_NAME}-v${VERSION}-${TARGET}"
+
+          mkdir -p "$STAGING"
+          cp "target/${BUILD_PROFILE}/${BINARY_NAME}" "$STAGING/"
+          zip -r "$ARCHIVE" "$STAGING"
+
+          # Generate individual sha256 checksum
+          sha256sum "$ARCHIVE" | awk '{print $1}' > "${ARCHIVE}.sha256"
+
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        working-directory: aptos-core
+        shell: pwsh
+        run: |
+          $archive = "$env:BINARY_NAME-v$env:VERSION-$env:TARGET.zip"
+          $staging = "$env:BINARY_NAME-v$env:VERSION-$env:TARGET"
+
+          New-Item -ItemType Directory -Path $staging -Force
+          Copy-Item "target/$env:BUILD_PROFILE/$env:BINARY_NAME.exe" "$staging/"
+          Compress-Archive -Path "$staging" -DestinationPath $archive
+
+          # Generate individual sha256 checksum
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          Set-Content -Path "${archive}.sha256" -Value $hash -NoNewline
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
+          path: |
+            aptos-core/${{ env.BINARY_NAME }}-v${{ needs.check.outputs.version }}-${{ matrix.target }}.zip
+            aptos-core/${{ env.BINARY_NAME }}-v${{ needs.check.outputs.version }}-${{ matrix.target }}.zip.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Create GitHub Release
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [check, build]
+    if: needs.check.outputs.should_build == 'true' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Generate combined SHA256SUMS
+        run: |
+          cd artifacts
+          # Combine individual .sha256 files into a single SHA256SUMS
+          for sha_file in *.sha256; do
+            archive="${sha_file%.sha256}"
+            hash=$(cat "$sha_file")
+            echo "$hash  $archive" >> SHA256SUMS
+          done
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+
+      - name: Fetch upstream release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          UPSTREAM_BODY=$(gh api "repos/$APTOS_CORE_REPO/releases/tags/$TAG" \
+            --jq '.body' 2>/dev/null || echo "")
+
+          # Build release body
+          {
+            echo "## MoveFlow $VERSION"
+            echo ""
+            echo "Built from [\`$TAG\`](https://github.com/$APTOS_CORE_REPO/releases/tag/$TAG) in aptos-core."
+            echo ""
+
+            if [[ -n "$UPSTREAM_BODY" ]]; then
+              echo "### Upstream Release Notes"
+              echo ""
+              echo "$UPSTREAM_BODY"
+              echo ""
+            fi
+
+            echo "### Downloads"
+            echo ""
+            echo "| Platform | Archive |"
+            echo "|----------|---------|"
+            echo "| Linux x86_64 | \`${BINARY_NAME}-v${VERSION}-x86_64-unknown-linux-gnu.zip\` |"
+            echo "| Linux ARM64 | \`${BINARY_NAME}-v${VERSION}-aarch64-unknown-linux-gnu.zip\` |"
+            echo "| macOS x86_64 | \`${BINARY_NAME}-v${VERSION}-x86_64-apple-darwin.zip\` |"
+            echo "| macOS ARM64 | \`${BINARY_NAME}-v${VERSION}-aarch64-apple-darwin.zip\` |"
+            echo "| Windows x86_64 | \`${BINARY_NAME}-v${VERSION}-x86_64-pc-windows-msvc.zip\` |"
+            echo ""
+            echo "### Checksums"
+            echo ""
+            echo "Verify with: \`sha256sum -c SHA256SUMS\`"
+            echo ""
+            echo "\`\`\`"
+            cat artifacts/SHA256SUMS
+            echo "\`\`\`"
+          } > release_body.md
+
+      - name: Detect pre-release
+        id: prerelease
+        run: |
+          if echo "$VERSION" | grep -qiE '(rc|beta|alpha|pre)'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: MoveFlow ${{ env.VERSION }}
+          body_path: release_body.md
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          files: |
+            artifacts/*.zip
+            artifacts/*.sha256
+            artifacts/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Update CHANGELOG.md
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ENTRY="## [$VERSION] - $DATE\n\nBuilt from [$TAG](https://github.com/$APTOS_CORE_REPO/releases/tag/$TAG).\n"
+
+          if [[ -f CHANGELOG.md ]]; then
+            # Insert after the header line
+            sed -i '/^# Changelog$/a\\n'"$ENTRY" CHANGELOG.md
+          else
+            printf "# Changelog\n\n%b\n" "$ENTRY" > CHANGELOG.md
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet || git commit -m "changelog: add $TAG"
+          git push
