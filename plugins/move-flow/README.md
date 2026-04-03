@@ -4,7 +4,7 @@ Move smart contract development plugin for Claude Code.
 
 ## Overview
 
-MoveFlow provides skills, agents, hooks, and an MCP server for developing, testing, and formally verifying [Move](https://aptos.dev/en/build/smart-contracts) smart contracts on [Aptos](https://aptos.dev). Version 1.0.1.
+MoveFlow provides skills, agents, hooks, and an MCP server for developing, testing, and formally verifying [Move](https://aptos.dev/en/build/smart-contracts) smart contracts on [Aptos](https://aptos.dev). Version 1.0.2.
 
 ## Skills
 
@@ -50,4 +50,4 @@ Provided by the `move-flow` MCP server (configured in `.mcp.json`).
 
 ## Author
 
-Aptos Labs — version 1.0.1
+Aptos Labs — version 1.0.2
