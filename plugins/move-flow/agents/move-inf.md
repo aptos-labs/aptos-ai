@@ -13,9 +13,6 @@ have a complete specification which passes verification.
 
 
 
-
-
-
 ## Move Specification Language
 
 Move specifications use `spec` blocks to express formal properties that are checked
@@ -165,124 +162,6 @@ spec {
 };
 ```
 
-
-# Proofs and Lemmas
-
-## Example
-
-```move
-spec fun sum(n: u64): u64 {
-    if (n == 0) { 0 } else { n + sum(n - 1) }
-}
-
-spec lemma monotonicity(x: num, y: num) {
-    requires x <= y;
-    ensures sum(x) <= sum(y);
-} proof {
-    if (x < y) {
-        assert sum(y - 1) <= sum(y);
-        apply monotonicity(x, y - 1);
-    }
-}
-
-
-fun sum_up_to(n: u64): u64 { /* iterative impl */ }
-spec sum_up_to {
-    requires n <= 5;
-    ensures result == sum(n);
-} proof {
-   forall x,y {sum(x), sum(y)} apply monotonicity(x, y);
-}
-```
-
-## Proofs
-
-A proof consists of a sequence of
-proof statements together with if-then-else and let bindings.
-
-```ebnf
-Proof :=
- | "let" name "=" Expr                      # Abbreviate an expression
- | "if" "(" Expr ")" Proof "else" Proof     # Conditional
- | ProofBlock
- | "assert" Expr                            # Assert a condition
- | "assume" Expr                            # Inject an unproven assumption ("axiom")
- | "apply" LemmaInstance                    # Instantiate a Lemma
- | "forall" QuantifierDecls [ Patterns ]
-   "apply" LemmaInstance                    # Universal Lemma Instantiation
- | "calc" "(" Expr { RelOp Expr } ")"      # Dijkstras calc
- ;
- 
-ProofBlock := 
-   "{" { Proof ";" } "}"
- ;
- 
-LemmaInstance ::=
-   QualfiedName "(" [ Expr { "," Expr } ] ")"
- 
-RelOp := "==" | "!=" | "<" | "<=" | ">" | ">="
- ;
- 
-```
-
-A proof block can be attached to any specification block as postfix to that block, for example:
-
-```
-spec sum_to_n {
-  ensures result == sum(n);
-} proof {
-  forall x: u64, y: u64 apply Monotonicity(x, y);
-}  
-```
-
-A proof is translated by mapping it to a sequence of assumes/asserts at the
-verification entry points of a function.
-
-- The split statement is translated by creating different verification variants for each value split 
-  with according assumptions of the value at the split point and otherwise identical content.
-- The apply statement is translated by injecting pre/post conditions of the (expected to be proven) lemma.
-  This is very similar like calling an opaque function in Move code.
-
-## Lemmas
-
-A Lemma is a member of a specification block, similar like a spec function. Its
-user syntax is:
-
-```
-spec fun sum(n: u64): u64 {
-    if (n == 0) { 0 } else { n + sum(n - 1) }
-}
-spec lemma sum_monotonicity(x: num, y: num) {
-    requires x <= y;
-    ensures sum(x) <= sum(y);
-} proof {
-    if (x < y) {
-        assert sum(y - 1) <= sum(y);
-        apply sum_monotonicity(x, y - 1);
-    }
-}
-```
-
-Or on module block level:
-
-```
-spec module {
-  fun sum ...
-  lemma sum_monotonicity ...
-}
-```
-
-The `spec lemma` shortcut is sugar for `spec module { lemma ... }`, analogous
-to the `spec fun` shortcut for helper functions.
-
-It has a parameter list like a spec function (but no return value) followed by a
-specification block (with requires, ensures, and pragmas the only allowed conditions).
-Attached to this is an (optional) proof.
-
-Lemma names are in a separate namespace. They are scoped to modules,
-similar like specification functions. They can only be referenced from
-proof 'apply' statements.
-
 ### Property markers
 
 The `[inferred]` property marks conditions that were not written by the user. Its value indicates
@@ -346,218 +225,6 @@ Parameters:
 
 
 
-## Writing and Editing Specs
-
-When writing or editing specifications:
-
-1. Use `move_package_manifest` to discover source files.
-2. Read the function body to understand its behavior and abort conditions.
-3. Write `spec fun_name { ... }` blocks after each function, following the Move Specification
-   Language rules above.
-4. Write `spec lemma lemma_name ...` block after the function for which they are introduced.
-5. Spec functions are put into a `spec fun` declarations
-6. If the project already uses `.spec.move` files, put new specs into that file instead of the 
-   main Move file.
-7. Spec modules (as in `spec <module_name> { items }`) share the same 
-   namespace as `<module_name>`
-
-### Simplifying Specifications
-
-Work through the following in order when cleaning up inferred or hand-written specs.
-
-**Remove vacuous conditions.** Delete every condition marked `[inferred = vacuous]`.
-These arise from havoced loop variables without sufficient invariants and are
-semantically meaningless (e.g.
-`ensures [inferred = vacuous] forall x: u64: result == x`).
-
-**Eliminate quantifiers.** Conditions with quantifiers over unbounded types
-(`forall x: u64`, `exists x: u64`, `forall x: address`) cause SMT solver timeouts.
-They are often marked `[inferred = sathard]` but not always. Replace each with an
-equivalent **non-quantified** expression:
-
-- `exists x: u64: x < n && f(x)` — replace with a concrete bound or closed-form
-  expression derived from the loop logic.
-- `forall x: address: x != a ==> g(x)` — this expresses a frame condition ("nothing
-  else changed"). Replace with an explicit `modifies` clause or enumerate the affected
-  addresses.
-
-**Ensure quantifiers have triggers.** Quantifiers without triggers must be avoided. Move 
-supports lists of triggers as in `Q x: T, y: R {p1, .., pn}..{q1, .., qn}: e`, where each outer 
-list is an alternative where all inner patterns must match. Notice that only triggers over 
-uninterpreted functions are allowed, not over builtin operators.
-
-**Simplify `update_field` expressions.** The WP engine uses
-`update_field(s, field, val)` for struct mutations. Rewrite to direct struct
-construction when all fields are determined, e.g.:
-
-- `update_field(old(global<T>(addr)), value, v)` becomes
-  `T { value: v, ..old(global<T>(addr)) }`, or when the struct has a single field,
-  simply `T { value: v }`.
-- Nested `update_field(update_field(old(p), x, a), y, b)` becomes
-  `Point { x: a, y: b }` when all fields are covered.
-
-**Consolidate unrolled specs.** When `pragma unroll` is used, the WP produces one
-condition per unrolling step (e.g. `n == 0 ==> ...`, `n == 1 ==> ...`, ...,
-`k < n ==> ...`). If there is a closed-form generalization, replace the case list
-with a single condition. Remove the `pragma unroll` once the closed-form is in place.
-
-**General cleanup:**
-
-- Fix `old()` usage: `old()` in `aborts_if` or `requires` is invalid — those
-  clauses are already evaluated in the pre-state. Remove `old()` wrappers.
-- Remove redundant conditions implied by others or by language guarantees (e.g. an
-  `aborts_if` subsumed by a stronger one).
-- Simplify arithmetic. The WP engine mirrors the computation steps, producing
-  expressions that can be algebraically reduced:
-  - Combine terms: `(n - 1) * n / 2 + n` simplifies to `n * (n + 1) / 2`.
-  - Flatten nested offsets: `old(v) + 1 + 1` becomes `old(v) + 2`.
-  - Simplify overflow bounds: `v + (n - 1) > MAX_U64 - 1` becomes `v + n > MAX_U64`.
-  - Specs use mathematical (unbounded) integers, so unlike Move code there is no
-    risk of underflow in spec expressions — reorder freely for clarity.
-- Remove `[inferred]` and `[inferred = sathard]` markers from conditions you keep.
-
-### Additional Rules for Editing Specs
-
-1. **Do NOT change function bodies.** Only modify `spec` blocks and their contents.
-2. **Preserve** any user-written (non-inferred) specifications exactly as they are.
-3. **Never duplicate conditions.** Before adding any condition to a spec block,
-   check whether an equivalent condition already exists. Do not create a condition
-   that is semantically identical to one already present in the same spec block.
-4. **No empty spec blocks.** Never create or leave behind an empty
-   `spec fun_name {}` block. If removing inferred conditions would leave a spec
-   block with no conditions or pragmas, delete the entire block instead.
-
-
-
-
-
-
-
-
-## Verification 
-
-### Verification Tool
-
-Use `move_package_verify` to run the Move Prover on a package and
-formally verify its specifications:
-
-- Call with `package_path` set to the package directory and `timeout` set to
-  5.
-- The tool returns "verification succeeded" when all specs hold, or a diagnostic with a
-  counterexample when a spec fails.
-
-#### Narrowing scope with filters
-
-Use the `filter` parameter to restrict the verification scope:
-
-- **Single function:** set `filter` to `module_name::function_name`.
-- **Single module:** set `filter` to `module_name`.
-
-#### Excluding targets
-
-Use the `exclude` parameter to skip specific functions or modules while
-verifying the rest of the scope:
-
-- **Exclude function(s):** set `exclude` to `["module_name::function_name"]`.
-- **Exclude module(s):** set `exclude` to `["module_name"]`.
-
-Exclusions take precedence over the `filter` scope — a target that matches both
-`filter` and `exclude` is excluded. This is useful in Phase 2 to skip timed-out
-functions without modifying source files.
-
-#### Setting timeout
-
-Verification can be long-running (10 seconds or more). Always explicitly specify a timeout. 
-Start with a low timeout of 5 to get quick feedback.
-Increase the timeout to not more than 10 in the case of 
-investigating difficult verification problems. 
-
-### Diagnosing Verification Failures
-
-When the prover reports a counterexample or error:
-
-- **Postcondition failure**: The `ensures` clause doesn't hold for some execution path.
-  Check whether an edge case is missing or the condition is too strong.
-- **Abort condition failure**: An abort path is not covered by `aborts_if`. Trace which
-  operations can abort (arithmetic overflow, missing resource, vector out-of-bounds) and
-  add the missing condition.
-- **Wrong `old()` usage**: Using `old()` in `aborts_if` or `requires` causes a compilation
-  error. Remove it — those clauses are already evaluated in the pre-state.
-- **Loop-related failures**: Missing or too-weak loop invariants cause havoced variables.
-  Strengthen the invariant to constrain all loop-modified variables.
-- **Timeout ("out of resources")**:
-
-  > **HARD RULE — do NOT delete, comment out, or weaken any `aborts_if` or
-  > `ensures` condition to resolve a timeout.** This includes adding
-  > `pragma aborts_if_is_partial;`, which silently suppresses uncovered abort
-  > paths. Every condition is assumed semantically correct; removing one hides
-  > real properties and makes the specification unsound. If you are tempted to
-  > remove a condition because verification is slow, you MUST instead rewrite
-  > it in a semantically equivalent form or add proofs.
-
-  Timeout resolution strategies (all preserve existing conditions):
-  - Add `proof { ... }` ([Proofs and Lemmas]) blocks to the function to guide the
-    solver. 
-  - Add explicit lemmas [Lemmas] to guide the solver and `apply` them in a proof.
-    You MUST not introduce axioms since they are unproven, but lemmas come with
-    a proof.
-  - When you use universal lemma application, always add triggers, as
-    in `forall x: u64 {f(x)} apply lemma_for_f(x)`. 
-  - Restructure expressions while preserving their meaning (e.g. factor out common
-    sub-expressions into `let` bindings, reorder conjuncts).
-  - Document every new helper function or lemma with a `///` doc comment explaining
-    what property it captures and why it is needed.
-
-  **Avoid non-linear arithmetic in spec helpers.** SMT solvers handle linear
-  arithmetic well but struggle with multiplication, division, or modulo between
-  two non-constant expressions. When defining helper functions or lemmas, prefer
-  additive recurrences over closed-form formulas that involve products of
-  variables. For example, use `sum_up_to(n) == sum_up_to(n - 1) + n` (linear)
-  rather than the closed form `n * (n + 1) / 2` (non-linear). If a non-linear
-  closed form is needed for the final specification, connect it to the recursive
-  helper via a separate lemma so the solver can reason about each step
-  linearly.
-
-  **Do not redefine built-in operations as spec helpers.** The SMT solver
-  already understands arithmetic operators (`*`, `/`, `%`), comparisons, and
-  bitwise operations natively. Wrapping them in a recursive spec function
-  (e.g. `spec fun mul(a: u64, b: u64): u64 { if (b == 0) { 0 } else { a + mul(a, b - 1) } }`)
-  adds an unnecessary unfolding layer that makes solving harder, not easier.
-  Only introduce a spec helper when it encodes logic the solver does not have
-  built in — such as a loop accumulation pattern or a recursive
-  data-structure traversal.
-
-  **Document every function and lemma.** When introducing a spec helper function
-  or lemma, add a `///` doc comment explaining what property it captures and
-  why it is needed (e.g. which loop or timeout it supports). Place new spec
-  helper functions below the Move function and spec block that introduce them.
-  Place lemmas for a helper function directly beneath that helper's
-  declaration.
-
-### Verification Workflow
-
-Follow this three-phase approach to resolve verification failures efficiently.
-
-**Phase 1 — Full-scope run.** Run verification for the full requested scope with
-`timeout` set to 5. This gives an overview of all failures —
-both logical errors and timeouts. 
-
-**Phase 2** — If they are any logical errors, iterate to fix them using the `exclude` 
-parameter of the verify tool to exclude functions whose verification timed out. Only 
-continue to phase 3 once all non-timeouts cleanly pass.
-
-**Phase 3** — Resolve timeouts one by one calling prover with a **function-level filter** (see above) 
-and apply the timeout resolution strategies described above. As a timeout value,
-10 must be used. If a function cannot be resolved after
-2 attempts and the user did not request otherwise, add
-`pragma verify = false;` and keep the specifications so the user can investigate.
-
-**Phase 4** -- Finally run the prover for the full requested scope using as timeout
-10 to verify success.
-
-
-
-
 ## Spec Inference v2
 
 
@@ -576,7 +243,11 @@ Parameters:
 - **`spec_output`** (optional, default `"inline"`) — where to write inferred specs.
   `"inline"` injects specs into the original source files.
   `"file"` writes separate `.spec.move` files alongside the sources, leaving
-  originals untouched. Use `"file"` when the user asks for specs in a separate file.
+  originals untouched.
+
+**Important:** If the user asks for specs in a separate file, in a spec file, or
+to keep the source untouched, you **must** pass `spec_output: "file"`. Only use
+the default `"inline"` when the user wants specs added directly into their source.
 
 If the program contains loops, they are broken into exit and iteration points.
 Loop variables are havoced and the loop invariant is expected to fix them.
@@ -595,16 +266,10 @@ stale copies leads to duplicate conditions.
 
 ### Common Pitfalls in AI Generated Spec Expressions
 
-When writing spec expressions — especially loop invariants — these rules are
-**hard constraints** enforced by the compiler. Violating them will cause
-compilation errors and wasted iterations:
+Respect the `old()` usage rules and expression restrictions from the spec
+language reference above — violating them causes compilation errors. Additionally:
 
-- **No `old(expr)` on locals or complex expressions.** In loop invariants,
-  `old(x)` is only allowed when `x` is a simple function parameter name.
-  Use locals directly — they refer to the current iteration's values.
-- **No `*e` or `&e`.** Spec expressions operate on values, not references.
-  Access fields directly (e.g. `v.field`, not `(*v).field`).
-- **Do not forgot space after property** Write`aborts_if [inferred] !exists p` 
+- **Do not forget space after property.** Write `aborts_if [inferred] !exists p` 
   with spaces separating the `[..]` property.
 
 ### Avoiding Duplicate Conditions
@@ -669,11 +334,20 @@ helper's declaration.
 For every loop lacking an invariant in a function matching the `filter`, add 
 one marked as `[inferred]`. Define recursive spec helper functions as needed. You
 MUST avoid the Common Pitfalls in Spec Expressions described above.
+When using `spec_output: "file"`, add loop invariants directly in the source
+(they must stay inside the function body), but place any new spec helper
+functions and lemmas in the `.spec.move` file inside a `spec module { }` block.
 
 **Phase 2 — Run WP.** With invariants in place, run the WP tool with the `filter`.
 
-**Phase 3 — Simplify and verify functions matching the `filter`.** Simplify the inferred 
-specifications described above. Then verify the result using the verification workflow.
+**Phase 3 — Simplify and verify.** Delegate to the `move-verify` subagent.
+Pass the package path, filter, and instruct it to simplify the WP-inferred
+specifications (remove vacuous/sathard conditions, eliminate quantifiers,
+simplify `update_field` expressions, clean up arithmetic) and then verify.
+When using `spec_output: "file"`, tell the subagent that all inferred spec
+helper functions and lemmas belong in the `.spec.move` file inside a
+`spec module { }` block, and function conditions go in `spec fun_name { }`
+blocks in the same file.
 
 
 
