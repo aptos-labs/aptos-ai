@@ -4,7 +4,7 @@ Move smart contract development plugin for Claude Code.
 
 ## Overview
 
-MoveFlow provides skills, agents, hooks, and an MCP server for developing, testing, and formally verifying [Move](https://aptos.dev/en/build/smart-contracts) smart contracts on [Aptos](https://aptos.dev). Version 1.0.3.
+MoveFlow provides skills, agents, hooks, and an MCP server for developing, testing, and formally verifying [Move](https://aptos.dev/en/build/smart-contracts) smart contracts on [Aptos](https://aptos.dev). Version 1.0.4.
 
 ## Skills
 
@@ -13,6 +13,7 @@ MoveFlow provides skills, agents, hooks, and an MCP server for developing, testi
 | `/move` | Move development on Aptos |
 | `/move-check` | Check a Move package for compilation errors |
 | `/move-inf` | Infer specifications for a Move package |
+| `/move-init` | Initialize Move workflow routing in the project CLAUDE.md |
 | `/move-prove` | Run the Move Prover to formally verify specifications |
 | `/move-test` | Generate unit tests for Move code. Use for test generation, writing tests, or improving coverage. |
 
@@ -22,6 +23,7 @@ MoveFlow provides skills, agents, hooks, and an MCP server for developing, testi
 |-------|-------------|
 | `move-check` | Check and fix compilation errors in a Move package |
 | `move-inf` | Infer specifications for a Move package |
+| `move-test` | Generate unit tests for Move code |
 | `move-verify` | Verify Move specifications using the Move Prover |
 
 ## MCP Tools
@@ -33,10 +35,10 @@ Provided by the `move-flow` MCP server (configured in `.mcp.json`).
 | `move_package_coverage` | Get uncovered source lines for a package |
 | `move_package_manifest` | Get information about the current Move package |
 | `move_package_query` | Query structural information about a Move package. |
-| `move_package_spec_infer` | Infer specifications via weakest-precondition analysis |
 | `move_package_status` | Check a Move package for compilation errors and warnings |
 | `move_package_test` | Run Move unit tests for a package |
 | `move_package_verify` | Verify Move specifications using the Move Prover |
+| `move_package_wp` | Raw WP engine — output requires loop-invariant synthesis and simplification that only the /move-inf skill workflow provides |
 
 ## Hooks
 
@@ -50,4 +52,4 @@ Provided by the `move-flow` MCP server (configured in `.mcp.json`).
 
 ## Author
 
-Aptos Labs — version 1.0.3
+Aptos Labs — version 1.0.4

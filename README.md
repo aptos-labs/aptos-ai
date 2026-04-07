@@ -37,55 +37,36 @@ cargo install --path aptos-move/flow --locked --profile ci
 /plugin install move-flow@aptos-ai
 ```
 
-You are all set. Try:
+After installing, run `/move-init` to set up your project for Move development. Then try:
 
 ```
-> /mcp
-    Built-in MCPs (always available)
-    plugin:move-flow:move-flow · ✔ connected
-```
-
-```
-❯ List move-flow commands                                                                                                                                                                                                                                                 
-
-● Here are the available move-flow MCP tools:
-
-  ┌─────────────────────────┬─────────────────────────────────────────────────────────────────────────────────┐
-  │          Tool           │                                   Description                                   │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_status     │ Check a Move package for compilation errors and warnings                        │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_manifest   │ Get package info (source paths, dependencies)                                   │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_query      │ Query package structure (dep graph, module summary, call graph, function usage) │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_test       │ Run Move unit tests (with optional baseline for coverage tracking)              │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_coverage   │ Get uncovered source lines, optionally scoped to a function                     │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_verify     │ Run the Move Prover for formal verification                                     │
-  ├─────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
-  │ move_package_spec_infer │ Infer specifications for a Move package                                         │
-  └─────────────────────────┴─────────────────────────────────────────────────────────────────────────────────┘
-
-  And the available move-flow skills (slash commands):
-
-  ┌──────────────┬───────────────────────────────────────────────────────┐
-  │    Skill     │                      Description                      │
-  ├──────────────┼───────────────────────────────────────────────────────┤
-  │ /move        │ General Move development on Aptos                     │
-  ├──────────────┼───────────────────────────────────────────────────────┤
-  │ /move-check  │ Check a Move package for compilation errors           │
-  ├──────────────┼───────────────────────────────────────────────────────┤
-  │ /move-prove  │ Run the Move Prover to formally verify specifications │
-  ├──────────────┼───────────────────────────────────────────────────────┤
-  │ /move-test   │ Generate unit tests for Move code                     │
-  ├──────────────┼───────────────────────────────────────────────────────┤
-  │ /move-inf    │ Infer specifications for a Move package               │
-  └──────────────┴───────────────────────────────────────────────────────┘                                                                                                                                                                                                
+❯ What can you do with Move?                                                                                                                                                                                                   
+                                                                                                                                                                                                                          
+● Here's what I can help with for Move development:                                                                                                                                                                         
+                                                                                                                                                                                                                          
+  Skills / Agents available:                                                                                                                                                                                                
    
+  ┌────────────────────────────────────────────────────────────────────┬─────────────┬─────────────┐                                                                                                                        
+  │                             Capability                             │    Skill    │    Agent    │                                                                                                                      
+  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤
+  │ Spec inference — infer specifications, generate specs, WP analysis │ /move-inf   │ move-inf    │
+  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤
+  │ Verification — prove, run prover, check specifications             │ /move-prove │ move-verify │                                                                                                                        
+  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
+  │ Testing — generate unit tests, improve coverage                    │ /move-test  │ move-test   │                                                                                                                        
+  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
+  │ Fix compilation — diagnose and fix compile errors                  │ /move-check │ move-check  │                                                                                                                      
+  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
+  │ General Move — language reference, writing/reading/explaining code │ /move       │ —           │
+  └────────────────────────────────────────────────────────────────────┴─────────────┴─────────────┘                                                                                                                        
+                                                                                                                                                                                                                          
+  General development tasks:                                                                                                                                                                                                
+                                                                                                                                                                                                                          
+  - Write new Move modules, functions, and structs                                                                                                                                                                          
+  - Read and explain existing Move code
+  - Refactor Move code (using Move 2 syntax per your preferences)                                                                                                                                                           
+  - Add loop invariants, pre/post conditions, and other formal specs                                                                                                                                                        
+  - Debug failing tests or prover errors                                                                                                                                                                                    
 ```
-
-You should now be able to use prompts like `compile Move`, `compile Move and fix errors`, `generate tests`, and more.
 
 Please report any oddities and feature suggestions to `#move-eng`! 

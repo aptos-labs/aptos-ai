@@ -31,7 +31,7 @@ double-spending at compile time.
   compilation errors, fix them before proceeding with further changes.
 
 
-## Reference
+### Links
 
 - [The Move Book](https://aptos.dev/move/book/SUMMARY)
 - [Aptos Framework Reference](https://aptos.dev/reference/move/?branch=mainnet&page=aptos-framework/doc/overview.md)
@@ -45,19 +45,19 @@ by the Move Prover.
 
 ### Function spec clauses
 
-These appear in `spec fun_name { ... }` blocks. Spec blocks ALWAYS appear after the function
+These appear in `spec fun_name { ... }` blocks. Spec blocks always appear after the function
 definition. If `fun_name` clashes with a soft keyword (e.g. `lemma`), use `spec @fun_name { ... }`
 to escape it.
 
 - `ensures <expr>`: Postcondition that must hold when the function returns normally.
   Evaluated in the **post-state**. Use `old(expr)` to refer to pre-state values.
 - `aborts_if <expr>`: Condition under which the function may abort. **Evaluated in the
-  pre-state** — **NEVER use `old()`** (see `old()` usage rules below). If any
+  pre-state** — do not use `old()` (see `old()` usage rules below). If any
   `aborts_if` conditions are present, the function must abort if and only if one of the
   conditions holds. Omitting all `aborts_if` clauses means abort behavior is *unspecified*
   (any abort is allowed). To express that a function never aborts, write `aborts_if false;`.
 - `requires <expr>`: Precondition that callers must satisfy. **Evaluated in the pre-state** —
-  **NEVER use `old()`** (see `old()` usage rules below).
+  Do not use `old()` (see `old()` usage rules below).
 - `modifies <resource>`: Declares which global resources the function may modify.
 
 ### Loop invariants
@@ -200,7 +200,7 @@ the origin or quality:
   SMT solvers. Likely to cause verification timeouts — should be simplified or reformulated.
 
 
-## Reference
+### Links
 
 - [Move Specification Language](https://aptos.dev/en/build/smart-contracts/prover/spec-lang)
 

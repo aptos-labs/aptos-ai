@@ -3,6 +3,42 @@ name: move-prove
 description: Run the Move Prover to formally verify specifications
 ---
 
+Before doing any work, use TaskCreate to create one task for each
+`**Task:**` entry listed below. Then execute them in order, marking
+each in_progress when you start it and completed when you finish.
+
+
+
+
+## Verification Tasks — Execute In Order
+
+**Task: Full-scope verification run.** Run verification for the full requested scope
+with `timeout` set to 5. This gives an
+overview of all failures — both logical errors and timeouts.
+
+**Task: Fix logical errors.** If there are any logical errors, iterate to fix them
+using the `exclude` parameter of the verify tool to exclude functions whose
+verification timed out. Only continue once all non-timeouts cleanly pass.
+
+**Task: Resolve timeouts.** Resolve timeouts one by one calling the prover with a
+function-level filter and `timeout` set to 10.
+Apply the timeout resolution strategies from the reference material below
+(spec helpers, lemmas, proofs). If a function cannot be resolved after
+2 attempts and the user did not request
+otherwise, add `pragma verify_duration_estimate = N;` where `N` is the exact
+timeout at which you observed verification succeed. If verification never
+succeeded, use `pragma verify = false;` instead.
+
+**Task: Final full-scope verification.** Run the prover for the full requested scope
+using `timeout` 10 to verify success. Functions
+with `pragma verify_duration_estimate = N;` where `N` exceeds the timeout will
+be automatically skipped — this is expected.
+
+
+
+
+The reference material below supports the tasks above.
+
 
 ## Move Language
 
@@ -31,7 +67,7 @@ double-spending at compile time.
   compilation errors, fix them before proceeding with further changes.
 
 
-## Reference
+### Links
 
 - [The Move Book](https://aptos.dev/move/book/SUMMARY)
 - [Aptos Framework Reference](https://aptos.dev/reference/move/?branch=mainnet&page=aptos-framework/doc/overview.md)
@@ -89,19 +125,19 @@ by the Move Prover.
 
 ### Function spec clauses
 
-These appear in `spec fun_name { ... }` blocks. Spec blocks ALWAYS appear after the function
+These appear in `spec fun_name { ... }` blocks. Spec blocks always appear after the function
 definition. If `fun_name` clashes with a soft keyword (e.g. `lemma`), use `spec @fun_name { ... }`
 to escape it.
 
 - `ensures <expr>`: Postcondition that must hold when the function returns normally.
   Evaluated in the **post-state**. Use `old(expr)` to refer to pre-state values.
 - `aborts_if <expr>`: Condition under which the function may abort. **Evaluated in the
-  pre-state** — **NEVER use `old()`** (see `old()` usage rules below). If any
+  pre-state** — do not use `old()` (see `old()` usage rules below). If any
   `aborts_if` conditions are present, the function must abort if and only if one of the
   conditions holds. Omitting all `aborts_if` clauses means abort behavior is *unspecified*
   (any abort is allowed). To express that a function never aborts, write `aborts_if false;`.
 - `requires <expr>`: Precondition that callers must satisfy. **Evaluated in the pre-state** —
-  **NEVER use `old()`** (see `old()` usage rules below).
+  Do not use `old()` (see `old()` usage rules below).
 - `modifies <resource>`: Declares which global resources the function may modify.
 
 ### Loop invariants
@@ -244,7 +280,7 @@ the origin or quality:
   SMT solvers. Likely to cause verification timeouts — should be simplified or reformulated.
 
 
-## Reference
+### Links
 
 - [Move Specification Language](https://aptos.dev/en/build/smart-contracts/prover/spec-lang)
 
@@ -330,16 +366,35 @@ with a single condition. Remove the `pragma unroll` once the closed-form is in p
   - Simplify overflow bounds: `v + (n - 1) > MAX_U64 - 1` becomes `v + n > MAX_U64`.
   - Specs use mathematical (unbounded) integers, so unlike Move code there is no
     risk of underflow in spec expressions — reorder freely for clarity.
-- Remove `[inferred]` and `[inferred = sathard]` markers from conditions you keep.
+- **Keep `[inferred]` markers** on all inferred conditions — they distinguish
+  inferred specs from user-written ones and are needed for WP re-runs.
+  Remove `[inferred = vacuous]` and `[inferred = sathard]` conditions entirely
+  (as described above), but keep plain `[inferred]` on conditions you retain.
+- **Keep `pragma opaque = true;`** — never remove it. It is essential for
+  verification performance, not an inference artifact. If a function with
+  `pragma opaque` fails verification, add `pragma verify = false;` rather
+  than removing the opaque pragma.
 
 ### Additional Rules for Editing Specs
 
-1. **Do NOT change function bodies.** Only modify `spec` blocks and their contents.
+1. **Do not change function bodies.** Only modify `spec` blocks and their contents.
 2. **Preserve** any user-written (non-inferred) specifications exactly as they are.
-3. **Never duplicate conditions.** Before adding any condition to a spec block,
+3. **Never drop `aborts_if` conditions.** Every function that can abort must have
+   `aborts_if` conditions. The WP tool infers both `ensures` and `aborts_if` —
+   simplify them but never remove them just because they are complex or hard to
+   verify. If an `aborts_if` needs rewriting, replace it with a semantically
+   equivalent expression, do not delete it.
+4. **Never remove `pragma opaque`.** The WP tool marks inferred specs as opaque
+   so the prover uses the spec contract instead of inlining the function body.
+   Removing it causes verification to re-analyze the implementation, leading to
+   timeouts. Preserve `pragma opaque = true;` in every spec block that has it.
+   If verification fails on an opaque function (e.g., the prover cannot reason
+   about closure side effects), add `pragma verify = false;` to disable
+   verification while keeping the spec contract intact for callers.
+5. **Never duplicate conditions.** Before adding any condition to a spec block,
    check whether an equivalent condition already exists. Do not create a condition
    that is semantically identical to one already present in the same spec block.
-4. **No empty spec blocks.** Never create or leave behind an empty
+6. **No empty spec blocks.** Never create or leave behind an empty
    `spec fun_name {}` block. If removing inferred conditions would leave a spec
    block with no conditions or pragmas, delete the entire block instead.
 
@@ -352,9 +407,9 @@ with a single condition. Remove the `pragma unroll` once the closed-form is in p
 
 
 
-# Proofs and Lemmas
+## Proofs and Lemmas
 
-## Example
+### Example
 
 ```move
 spec fun sum(n: u64): u64 {
@@ -381,7 +436,7 @@ spec sum_up_to {
 }
 ```
 
-## Proofs
+### Proofs
 
 A proof consists of a sequence of
 proof statements together with if-then-else and let bindings.
@@ -409,7 +464,7 @@ verification entry points of a function.
 - The apply statement is translated by injecting pre/post conditions of the (expected to be proven) lemma.
   This is very similar like calling an opaque function in Move code.
 
-## Lemmas
+### Lemmas
 
 A Lemma is a member of a specification block, similar like a spec function. Its
 user syntax is:
@@ -485,7 +540,7 @@ verifying the rest of the scope:
 - **Exclude module(s):** set `exclude` to `["module_name"]`.
 
 Exclusions take precedence over the `filter` scope — a target that matches both
-`filter` and `exclude` is excluded. This is useful in Phase 2 to skip timed-out
+`filter` and `exclude` is excluded. This is useful in the "Fix logical errors" task to skip timed-out
 functions without modifying source files.
 
 #### Setting timeout
@@ -510,73 +565,57 @@ When the prover reports a counterexample or error:
   Strengthen the invariant to constrain all loop-modified variables.
 - **Timeout ("out of resources")**:
 
-  > **HARD RULE — do NOT delete, comment out, or weaken any `aborts_if` or
-  > `ensures` condition to resolve a timeout.** This includes adding
-  > `pragma aborts_if_is_partial;`, which silently suppresses uncovered abort
-  > paths. Every condition is assumed semantically correct; removing one hides
-  > real properties and makes the specification unsound. If you are tempted to
-  > remove a condition because verification is slow, you MUST instead rewrite
-  > it in a semantically equivalent form or add proofs.
+  Do not delete, comment out, or weaken any `aborts_if` or `ensures`
+  condition to resolve a timeout. This includes adding
+  `pragma aborts_if_is_partial;`, which silently suppresses uncovered abort
+  paths. Every condition is assumed semantically correct; removing one hides
+  real properties and makes the specification unsound.
 
-  Timeout resolution strategies (all preserve existing conditions):
-  - Add `proof { ... }` ([Proofs and Lemmas]) blocks to the function to guide the
-    solver. 
-  - Add explicit lemmas [Lemmas] to guide the solver and `apply` them in a proof.
-    You MUST not introduce axioms since they are unproven, but lemmas come with
-    a proof.
-  - When you use universal lemma application, always add triggers, as
-    in `forall x: u64 {f(x)} apply lemma_for_f(x)`. 
-  - Restructure expressions while preserving their meaning (e.g. factor out common
-    sub-expressions into `let` bindings, reorder conjuncts).
-  - Document every new helper function or lemma with a `///` doc comment explaining
-    what property it captures and why it is needed.
+  Timeout resolution strategies — try these in order, and iterate
+  aggressively before resorting to `pragma verify_duration_estimate`:
+
+  1. **Add data invariants and global update invariants** to constrain
+     resource state. These are checked once per modifying function and then
+     assumed at every call site (including inside loops), giving the prover
+     facts for free without recursive helpers. See the inference reference
+     for details on when to use each kind.
+
+  2. **Introduce spec helper functions** that capture intermediate properties.
+     Factor complex `ensures` into compositions of simpler helpers. Each
+     helper should express one logical step the solver can verify independently.
+
+  3. **Add lemmas** to establish properties about spec helpers
+     (e.g. monotonicity, induction steps) that the solver cannot discover
+     on its own. Lemmas are proven propositions — do not introduce axioms.
+
+  4. **Add `proof { ... }` blocks** to function specs or lemmas to guide
+     the verifier with `assert`, `apply`, and `calc` steps. Use `apply`
+     to instantiate lemmas at specific points in the proof.
+
+  5. **Rewrite spec expressions** while preserving their meaning — factor
+     out common sub-expressions into `let` bindings, reorder conjuncts,
+     or replace a complex closed-form with a recursive helper connected
+     by a lemma.
+
+  When you use universal lemma application, always add triggers, as
+  in `forall x: u64 {f(x)} apply lemma_for_f(x)`.
 
   **Avoid non-linear arithmetic in spec helpers.** SMT solvers handle linear
   arithmetic well but struggle with multiplication, division, or modulo between
-  two non-constant expressions. When defining helper functions or lemmas, prefer
-  additive recurrences over closed-form formulas that involve products of
-  variables. For example, use `sum_up_to(n) == sum_up_to(n - 1) + n` (linear)
-  rather than the closed form `n * (n + 1) / 2` (non-linear). If a non-linear
-  closed form is needed for the final specification, connect it to the recursive
-  helper via a separate lemma so the solver can reason about each step
-  linearly.
+  two non-constant expressions. Prefer additive recurrences over closed-form
+  products. If a non-linear closed form is needed, connect it to a recursive
+  helper via a lemma so the solver reasons about each step linearly.
 
   **Do not redefine built-in operations as spec helpers.** The SMT solver
-  already understands arithmetic operators (`*`, `/`, `%`), comparisons, and
-  bitwise operations natively. Wrapping them in a recursive spec function
-  (e.g. `spec fun mul(a: u64, b: u64): u64 { if (b == 0) { 0 } else { a + mul(a, b - 1) } }`)
-  adds an unnecessary unfolding layer that makes solving harder, not easier.
-  Only introduce a spec helper when it encodes logic the solver does not have
-  built in — such as a loop accumulation pattern or a recursive
-  data-structure traversal.
+  already understands `*`, `/`, `%`, comparisons, and bitwise operations
+  natively. Only introduce a spec helper when it encodes logic the solver
+  does not have built in — such as a loop accumulation pattern or a
+  recursive data-structure traversal.
 
-  **Document every function and lemma.** When introducing a spec helper function
-  or lemma, add a `///` doc comment explaining what property it captures and
-  why it is needed (e.g. which loop or timeout it supports). Place new spec
-  helper functions below the Move function and spec block that introduce them.
-  Place lemmas for a helper function directly beneath that helper's
-  declaration.
-
-### Verification Workflow
-
-Follow this three-phase approach to resolve verification failures efficiently.
-
-**Phase 1 — Full-scope run.** Run verification for the full requested scope with
-`timeout` set to 5. This gives an overview of all failures —
-both logical errors and timeouts. 
-
-**Phase 2** — If they are any logical errors, iterate to fix them using the `exclude` 
-parameter of the verify tool to exclude functions whose verification timed out. Only 
-continue to phase 3 once all non-timeouts cleanly pass.
-
-**Phase 3** — Resolve timeouts one by one calling prover with a **function-level filter** (see above) 
-and apply the timeout resolution strategies described above. As a timeout value,
-10 must be used. If a function cannot be resolved after
-2 attempts and the user did not request otherwise, add
-`pragma verify = false;` and keep the specifications so the user can investigate.
-
-**Phase 4** -- Finally run the prover for the full requested scope using as timeout
-10 to verify success.
+  **Document every function and lemma.** Add a `///` doc comment explaining
+  what property it captures and why it is needed. Place new spec helper
+  functions below the Move function that introduces them. Place lemmas
+  directly beneath their helper's declaration.
 
 
 
