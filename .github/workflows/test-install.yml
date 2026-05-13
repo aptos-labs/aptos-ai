@@ -246,11 +246,15 @@ jobs:
           $output = & pwsh -NoProfile -File .\install.ps1 `
             -Version "0.0.0-nope" `
             -InstallDir "$env:RUNNER_TEMP\badver" 2>&1
-          if ($LASTEXITCODE -eq 0) {
+          $rc = $LASTEXITCODE
+          if ($rc -eq 0) {
             Write-Error "Expected failure but got success"
             exit 1
           }
-          Write-Host "OK: failed as expected"
+          Write-Host "OK: install.ps1 exited $rc as expected"
+          # Reset so the step itself succeeds — pwsh propagates LASTEXITCODE.
+          $global:LASTEXITCODE = 0
+          exit 0
 
       - name: Install latest
         if: needs.preflight.outputs.has_release == 'true'
