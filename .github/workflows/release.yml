@@ -1,0 +1,348 @@
+name: Release move-flow
+
+on:
+  push:
+    tags:
+      - 'move-flow-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.0.4). Looks for move-flow-v{version} in aptos-core.'
+        required: true
+        type: string
+      aptos_core_ref:
+        description: 'Override aptos-core ref (default: move-flow-v{version})'
+        required: false
+        type: string
+      dry_run:
+        description: 'Build artifacts but do not create a GitHub Release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  # Required for sigstore-backed build provenance attestations.
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Job 1: Resolve the tag/version and emit the build matrix
+  # ────────────────────────────────────────────────────────────────────
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      aptos_core_ref: ${{ steps.resolve.outputs.aptos_core_ref }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Resolve tag, version, aptos-core ref
+        id: resolve
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.aptos_core_ref }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="$INPUT_VERSION"
+            TAG="move-flow-v${VERSION}"
+          else
+            # Triggered by tag push: ref_name is the tag itself (e.g. move-flow-v1.0.4).
+            TAG="$GITHUB_REF_NAME"
+            VERSION="${TAG#move-flow-v}"
+          fi
+
+          # Default: pull the matching tag from aptos-core.
+          REF="${INPUT_REF:-move-flow-v${VERSION}}"
+
+          echo "tag=$TAG"               >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
+          echo "aptos_core_ref=$REF"    >> "$GITHUB_OUTPUT"
+          echo "dry_run=${INPUT_DRY_RUN:-false}" >> "$GITHUB_OUTPUT"
+
+          MATRIX=$(cat <<'JSON'
+          [
+            {"name":"macOS Intel",      "runner":"macos-15-intel",   "target":"x86_64-apple-darwin"},
+            {"name":"macOS ARM",        "runner":"macos-latest",     "target":"aarch64-apple-darwin"},
+            {"name":"Linux x86",        "runner":"ubuntu-24.04",     "target":"x86_64-unknown-linux-gnu"},
+            {"name":"Linux ARM",        "runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu"},
+            {"name":"Linux x86 compat", "runner":"ubuntu-latest",    "target":"x86_64-unknown-linux-gnu",  "compat":true, "container":"ubuntu:20.04"},
+            {"name":"Linux ARM compat", "runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "compat":true, "container":"ubuntu:20.04"},
+            {"name":"Windows x86",      "runner":"windows-2025",     "target":"x86_64-pc-windows-msvc"}
+          ]
+          JSON
+          )
+          echo "matrix=$(echo "$MATRIX" | jq -c .)" >> "$GITHUB_OUTPUT"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Job 2: Build move-flow for every selected platform
+  # ────────────────────────────────────────────────────────────────────
+  build:
+    needs: check
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.check.outputs.matrix) }}
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container || '' }}
+
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+      APTOS_CORE_REF: ${{ needs.check.outputs.aptos_core_ref }}
+
+    steps:
+      - name: Install container prerequisites
+        if: matrix.container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y curl ca-certificates git sudo
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Enable Windows long paths
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --global core.longpaths true
+
+      - name: Checkout release repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Checkout aptos-core
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          repository: aptos-labs/aptos-core
+          ref: ${{ env.APTOS_CORE_REF }}
+          path: aptos-core
+          fetch-depth: 1
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: bash .github/workflows/build-scripts/setup-linux.sh
+
+      - name: Install macOS build deps
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config openssl cmake llvm lld
+          OPENSSL_PREFIX="$(brew --prefix openssl)"
+          echo "OPENSSL_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Install Windows build deps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = 'C:\vcpkg\'
+          vcpkg install openssl:x64-windows-static-md --clean-after-build
+          "VCPKG_ROOT=C:\vcpkg\"                                 | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_STATIC=1"                                     | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Read Rust toolchain version
+        id: rust-version
+        shell: bash
+        run: |
+          CHANNEL=$(grep '^channel' aptos-core/rust-toolchain.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Using Rust toolchain: $CHANNEL"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable branch @ 2026-05
+        with:
+          toolchain: ${{ steps.rust-version.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          workspaces: aptos-core -> target
+          key: ${{ matrix.target }}${{ matrix.compat && '-compat' || '' }}
+
+      # Patch the CPU baseline for compat builds so binaries run on older
+      # CPUs and under emulation (e.g. Docker-on-Mac, qemu).
+      - name: Patch CPU baseline for x86 compat
+        if: matrix.compat && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cd aptos-core
+          sed -i 's/target-cpu=x86-64-v3/target-cpu=x86-64-v2/g' .cargo/config.toml
+          sed -i 's/-march=x86-64-v3/-march=x86-64/g' .cargo/config.toml
+          echo "Patched .cargo/config.toml for x86-64-v2 compat"
+
+      - name: Build move-flow
+        working-directory: aptos-core
+        run: cargo build -p aptos-move-flow --bin move-flow --profile cli
+
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
+        env:
+          COMPAT: ${{ matrix.compat }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          SUFFIX=""
+          if [ "$COMPAT" = "true" ]; then
+            SUFFIX="-compat"
+          fi
+          ARCHIVE="move-flow-v${VERSION}-${TARGET}${SUFFIX}.zip"
+          cd aptos-core/target/cli
+          zip "${GITHUB_WORKSPACE}/${ARCHIVE}" move-flow
+          echo "Packaged: ${ARCHIVE}"
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $Archive = "move-flow-v${env:VERSION}-${env:TARGET}.zip"
+          Compress-Archive -Path "aptos-core\target\cli\move-flow.exe" -DestinationPath $Archive
+          Write-Output "Packaged: $Archive"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: move-flow-${{ matrix.target }}${{ matrix.compat && '-compat' || '' }}
+          path: '*.zip'
+          if-no-files-found: error
+
+  # ────────────────────────────────────────────────────────────────────
+  # Job 3: Create the GitHub Release with all artifacts
+  # ────────────────────────────────────────────────────────────────────
+  release:
+    needs: [check, build]
+    if: needs.check.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+      APTOS_CORE_REF: ${{ needs.check.outputs.aptos_core_ref }}
+    steps:
+      - name: Checkout release repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum move-flow-v*.zip > SHA256SUMS
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          set -euo pipefail
+          if [ -f CHANGELOG.md ]; then
+            awk -v ver="$VERSION" '
+              /^## \[/ {
+                if (found) exit
+                if (index($0, "[" ver "]")) { found=1; next }
+              }
+              found { print }
+            ' CHANGELOG.md > release_notes_section.md
+          else
+            : > release_notes_section.md
+          fi
+
+          if [ ! -s release_notes_section.md ]; then
+            echo "_No changelog entry found for ${VERSION} — see commit history._" > release_notes_section.md
+          fi
+
+      - name: Build release body
+        run: |
+          set -euo pipefail
+          {
+            echo "## move-flow ${VERSION}"
+            echo ""
+            echo "Built from [aptos-core \`${APTOS_CORE_REF}\`](https://github.com/aptos-labs/aptos-core/tree/${APTOS_CORE_REF}/aptos-move/flow)."
+            echo ""
+            echo "### What's Changed"
+            echo ""
+            cat release_notes_section.md
+            echo ""
+            echo "### Install"
+            echo ""
+            echo '```bash'
+            echo "# Unix (Linux + macOS)"
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | sh"
+            echo ""
+            echo "# Windows (PowerShell)"
+            echo "irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.ps1 | iex"
+            echo ""
+            echo "# cargo-binstall"
+            echo "cargo binstall aptos-move-flow"
+            echo '```'
+            echo ""
+            echo "### Downloads"
+            echo ""
+            echo "| Platform | Archive | SHA-256 |"
+            echo "|----------|---------|---------|"
+            cd artifacts
+            for zip in move-flow-v*.zip; do
+              HASH=$(sha256sum "$zip" | cut -d' ' -f1)
+              SHORT="${HASH:0:16}…"
+              case "$zip" in
+                *x86_64-apple-darwin*)      PLATFORM="macOS x86_64 (Intel)" ;;
+                *aarch64-apple-darwin*)     PLATFORM="macOS ARM64 (Apple Silicon)" ;;
+                *x86_64*linux*compat*)      PLATFORM="Linux x86_64 (compat — older glibc / Docker-on-Mac)" ;;
+                *aarch64*linux*compat*)     PLATFORM="Linux ARM64 (compat — older glibc)" ;;
+                *x86_64*linux*)             PLATFORM="Linux x86_64" ;;
+                *aarch64*linux*)            PLATFORM="Linux ARM64" ;;
+                *x86_64*windows*)           PLATFORM="Windows x86_64" ;;
+                *)                          PLATFORM="$zip" ;;
+              esac
+              echo "| $PLATFORM | \`$zip\` | \`$SHORT\` |"
+            done
+            cd ..
+            echo ""
+            echo "### Verification"
+            echo ""
+            echo '```bash'
+            echo "sha256sum -c SHA256SUMS"
+            echo '```'
+          } > release_body.md
+
+      # Sign-and-prove that these exact archives were produced by this exact
+      # workflow run on this exact commit. Stored on the repo's Attestations
+      # page and verifiable with: gh attestation verify <file> --repo <owner>/<repo>
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: |
+            artifacts/move-flow-v*.zip
+            artifacts/SHA256SUMS
+
+      - name: Determine pre-release status
+        id: prerelease
+        run: |
+          if echo "$TAG" | grep -qE '-(rc|beta|alpha|test)'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: move-flow ${{ env.VERSION }}
+          prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}
+          body_path: release_body.md
+          files: |
+            artifacts/move-flow-v*.zip
+            artifacts/SHA256SUMS
