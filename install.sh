@@ -218,7 +218,7 @@ info "Version:   $VERSION"
 info "Archive:   $ARCHIVE"
 
 # ── Download + verify ───────────────────────────────────────────────
-TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t move-flow)"
+TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t move-flow.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 info "Downloading archive..."
@@ -229,7 +229,7 @@ info "Downloading checksums..."
 download "$SUMS_URL" "$TMP_DIR/SHA256SUMS" \
   || err "Checksums file not found: $SUMS_URL"
 
-EXPECTED="$(grep " ${ARCHIVE}\$" "$TMP_DIR/SHA256SUMS" | awk '{print $1}')"
+EXPECTED="$(awk -v name="$ARCHIVE" '$2 == name { print $1; exit }' "$TMP_DIR/SHA256SUMS")"
 [ -n "$EXPECTED" ] || err "No checksum entry for $ARCHIVE in SHA256SUMS"
 
 ACTUAL="$(sha256 "$TMP_DIR/$ARCHIVE")"

@@ -35,7 +35,14 @@ $Repo    = "aptos-labs/aptos-ai"
 $BinName = "move-flow"
 
 function Write-Info($msg) { Write-Host $msg }
-function Fail($msg)       { Write-Error $msg; exit 1 }
+
+# Under `$ErrorActionPreference = "Stop"`, `Write-Error` is terminating and
+# would tear through the `try { } finally { }` block as an uncaught exception
+# with a stack trace. Write to stderr directly and exit non-zero instead.
+function Fail($msg) {
+    [Console]::Error.WriteLine("error: $msg")
+    exit 1
+}
 
 # ── Platform detection ──────────────────────────────────────────────
 if (-not $Target) {

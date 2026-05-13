@@ -184,7 +184,12 @@ jobs:
 
       - name: Build move-flow
         working-directory: aptos-core
-        run: cargo build -p aptos-move-flow --bin move-flow --profile cli
+        run: |
+          cargo build \
+            -p aptos-move-flow \
+            --bin move-flow \
+            --target ${{ matrix.target }} \
+            --profile cli
 
       - name: Package binary (Unix)
         if: runner.os != 'Windows'
@@ -197,7 +202,7 @@ jobs:
             SUFFIX="-compat"
           fi
           ARCHIVE="move-flow-v${VERSION}-${TARGET}${SUFFIX}.zip"
-          cd aptos-core/target/cli
+          cd "aptos-core/target/${TARGET}/cli"
           zip "${GITHUB_WORKSPACE}/${ARCHIVE}" move-flow
           echo "Packaged: ${ARCHIVE}"
 
@@ -208,7 +213,9 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           $Archive = "move-flow-v${env:VERSION}-${env:TARGET}.zip"
-          Compress-Archive -Path "aptos-core\target\cli\move-flow.exe" -DestinationPath $Archive
+          Compress-Archive `
+            -Path "aptos-core\target\${env:TARGET}\cli\move-flow.exe" `
+            -DestinationPath $Archive
           Write-Output "Packaged: $Archive"
 
       - name: Upload artifact
