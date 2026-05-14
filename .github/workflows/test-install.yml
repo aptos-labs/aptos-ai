@@ -1,0 +1,277 @@
+name: Test install scripts
+
+on:
+  push:
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-install.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-install.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Specific version to test (e.g. 1.0.4). Leave blank to use latest release.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TEST_VERSION: ${{ inputs.version }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Skip download tests when no release exists yet — only test what
+  # doesn't require an actual release artifact.
+  # ────────────────────────────────────────────────────────────────────
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      has_release: ${{ steps.check.outputs.has_release }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/releases/latest" >/dev/null 2>&1; then
+            echo "has_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No published release found yet — download tests will be skipped."
+          fi
+
+  # ────────────────────────────────────────────────────────────────────
+  # Unix: ubuntu + macos (Intel + ARM via macos-latest)
+  # ────────────────────────────────────────────────────────────────────
+  unix:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest        # ARM
+          - macos-15-intel      # Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      # ── Tests that don't need a published release ─────────────────
+      - name: --help
+        run: sh install.sh --help
+
+      - name: Unknown argument fails
+        run: |
+          if sh install.sh --not-a-flag 2>/dev/null; then
+            echo "Expected failure but got success"; exit 1
+          fi
+
+      - name: Bad version fails cleanly (no such tag)
+        run: |
+          if sh install.sh --version 0.0.0-nope --install-dir "$RUNNER_TEMP/badver" 2>/dev/null; then
+            echo "Expected failure but got success"; exit 1
+          fi
+
+      # ── Tests that require a real release ─────────────────────────
+      - name: Install latest (auto-detect target)
+        if: needs.preflight.outputs.has_release == 'true'
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/latest"
+          sh install.sh --install-dir "$INSTALL_DIR"
+          test -x "$INSTALL_DIR/move-flow" || { echo "binary missing"; exit 1; }
+          "$INSTALL_DIR/move-flow" --help
+
+      - name: Install specific version
+        if: needs.preflight.outputs.has_release == 'true' && env.TEST_VERSION != ''
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/pinned"
+          sh install.sh --version "$TEST_VERSION" --install-dir "$INSTALL_DIR"
+          test -x "$INSTALL_DIR/move-flow"
+          "$INSTALL_DIR/move-flow" --help
+
+      - name: Install with explicit target override
+        if: needs.preflight.outputs.has_release == 'true' && runner.os == 'Linux' && runner.arch == 'X64'
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/override"
+          sh install.sh --target x86_64-unknown-linux-gnu --install-dir "$INSTALL_DIR"
+          test -x "$INSTALL_DIR/move-flow"
+
+      - name: Install with --compat on Linux
+        if: needs.preflight.outputs.has_release == 'true' && runner.os == 'Linux'
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/compat"
+          sh install.sh --compat --install-dir "$INSTALL_DIR"
+          test -x "$INSTALL_DIR/move-flow"
+          "$INSTALL_DIR/move-flow" --help
+
+      - name: --compat rejected on macOS
+        if: runner.os == 'macOS'
+        run: |
+          if sh install.sh --compat --install-dir "$RUNNER_TEMP/should-fail" 2>/dev/null; then
+            echo "Expected --compat to be rejected on macOS"; exit 1
+          fi
+
+      - name: PATH warning prints when install dir not on PATH
+        if: needs.preflight.outputs.has_release == 'true'
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/offpath"
+          # Strip the target dir from PATH so we know it isn't already present.
+          CLEAN_PATH="$(echo "$PATH" | tr ':' '\n' | grep -v "^$INSTALL_DIR$" | paste -sd: -)"
+          OUTPUT=$(PATH="$CLEAN_PATH" sh install.sh --install-dir "$INSTALL_DIR" 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "not in your PATH" \
+            || { echo "Expected PATH warning"; exit 1; }
+
+  # ────────────────────────────────────────────────────────────────────
+  # Verify the build provenance attestation on the latest release.
+  # ────────────────────────────────────────────────────────────────────
+  attestation:
+    needs: preflight
+    runs-on: ubuntu-latest
+    if: needs.preflight.outputs.has_release == 'true'
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Download an archive from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p dl && cd dl
+          # Grab any one archive — provenance covers them all.
+          gh release download --repo "${{ github.repository }}" \
+            --pattern 'move-flow-v*-x86_64-unknown-linux-gnu.zip' \
+            --pattern 'SHA256SUMS'
+          ls -la
+
+      - name: Verify build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cd dl
+          for f in move-flow-v*.zip SHA256SUMS; do
+            echo "::group::Verifying $f"
+            gh attestation verify "$f" --repo "${{ github.repository }}"
+            echo "::endgroup::"
+          done
+
+  # ────────────────────────────────────────────────────────────────────
+  # Docker: simulate older glibc and x86_64-under-ARM-emulation
+  # ────────────────────────────────────────────────────────────────────
+  docker-compat:
+    needs: preflight
+    runs-on: ubuntu-latest
+    if: needs.preflight.outputs.has_release == 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Install under ubuntu:20.04 (old glibc → compat path)
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            ubuntu:20.04 sh -c '
+              set -eu
+              apt-get update -qq
+              apt-get install -qq -y curl unzip ca-certificates >/dev/null
+              sh install.sh --install-dir /tmp/install 2>&1 | tee /tmp/out
+              grep -q "compat" /tmp/out || { echo "expected compat selection"; exit 1; }
+              test -x /tmp/install/move-flow
+              /tmp/install/move-flow --help
+            '
+
+  # ─── Same scenario users hit with Docker-on-Mac-ARM ───────────────
+  # An x86_64 image on an ARM host, going through qemu-user emulation:
+  #   - uname -m reports x86_64
+  #   - /proc/cpuinfo does NOT advertise AVX2 (qemu's default x86 CPU
+  #     model is qemu64, which only exposes SSE3)
+  #   - the v3-baseline binary would SIGILL
+  # install.sh's AVX2 check should fire and pick the compat archive.
+  qemu-x86-on-arm:
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    if: needs.preflight.outputs.has_release == 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Enable qemu-user binfmt for x86_64
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3.7.0
+        with:
+          platforms: linux/amd64
+
+      - name: Run x86_64 ubuntu:24.04 under emulation
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/work" -w /work \
+            ubuntu:24.04 sh -c '
+              set -eu
+              # Sanity: prove this is x86_64 emulation on an ARM host with no AVX2.
+              echo "uname -m: $(uname -m)"
+              if grep -qE "^flags[[:space:]]*:.*[[:space:]]avx2([[:space:]]|$)" /proc/cpuinfo; then
+                echo "FAIL: qemu unexpectedly exposed AVX2 — test scenario is invalid"
+                exit 1
+              fi
+              apt-get update -qq
+              apt-get install -qq -y curl unzip ca-certificates >/dev/null
+              sh install.sh --install-dir /tmp/install 2>&1 | tee /tmp/out
+              grep -q "compat" /tmp/out \
+                || { echo "FAIL: install.sh did not pick compat build under emulation"; exit 1; }
+              test -x /tmp/install/move-flow
+              # If we got the wrong build, this would SIGILL.
+              /tmp/install/move-flow --help
+            '
+
+  # ────────────────────────────────────────────────────────────────────
+  # Windows
+  # ────────────────────────────────────────────────────────────────────
+  windows:
+    needs: preflight
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Bad version fails cleanly
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $output = & pwsh -NoProfile -File .\install.ps1 `
+            -Version "0.0.0-nope" `
+            -InstallDir "$env:RUNNER_TEMP\badver" 2>&1
+          $rc = $LASTEXITCODE
+          if ($rc -eq 0) {
+            Write-Error "Expected failure but got success"
+            exit 1
+          }
+          Write-Host "OK: install.ps1 exited $rc as expected"
+          # Reset so the step itself succeeds — pwsh propagates LASTEXITCODE.
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Install latest
+        if: needs.preflight.outputs.has_release == 'true'
+        shell: pwsh
+        run: |
+          $InstallDir = Join-Path $env:RUNNER_TEMP "latest"
+          .\install.ps1 -InstallDir $InstallDir
+          $Bin = Join-Path $InstallDir "move-flow.exe"
+          if (-not (Test-Path $Bin)) { Write-Error "binary missing"; exit 1 }
+          & $Bin --help
+
+      - name: Install specific version
+        if: needs.preflight.outputs.has_release == 'true' && env.TEST_VERSION != ''
+        shell: pwsh
+        run: |
+          $InstallDir = Join-Path $env:RUNNER_TEMP "pinned"
+          .\install.ps1 -Version $env:TEST_VERSION -InstallDir $InstallDir
+          $Bin = Join-Path $InstallDir "move-flow.exe"
+          if (-not (Test-Path $Bin)) { Write-Error "binary missing"; exit 1 }
+          & $Bin --help
