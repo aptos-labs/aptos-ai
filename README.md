@@ -39,6 +39,9 @@ cargo install --path aptos-core/aptos-move/flow --locked --profile cli
 Prebuilt binaries are published as GitHub Releases on this repo. Every archive
 is listed in a `SHA256SUMS` file alongside it. See
 [Releases](https://github.com/aptos-labs/aptos-ai/releases) for direct downloads.
+The release workflow consumes the matching `move-flow-v<version>` tag from
+`aptos-core` and regenerates the `plugins/move-flow/` marketplace tree from the
+built binary.
 
 **Verifying provenance.** Every release is signed by GitHub's sigstore-backed
 build provenance attestation — proof the archive was produced by *this exact

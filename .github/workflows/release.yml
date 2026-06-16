@@ -21,10 +21,7 @@ on:
         default: false
 
 permissions:
-  contents: write
-  # Required for sigstore-backed build provenance attestations.
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   CARGO_INCREMENTAL: 0
@@ -32,11 +29,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────
-  # Job 1: Resolve the tag/version and emit the build matrix
-  # ────────────────────────────────────────────────────────────────────
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
@@ -58,18 +54,27 @@ jobs:
             VERSION="$INPUT_VERSION"
             TAG="move-flow-v${VERSION}"
           else
-            # Triggered by tag push: ref_name is the tag itself (e.g. move-flow-v1.0.4).
             TAG="$GITHUB_REF_NAME"
             VERSION="${TAG#move-flow-v}"
           fi
 
-          # Default: pull the matching tag from aptos-core.
-          REF="${INPUT_REF:-move-flow-v${VERSION}}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::move-flow version '$VERSION' must be MAJOR.MINOR.PATCH."
+            exit 1
+          fi
 
-          echo "tag=$TAG"               >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION"       >> "$GITHUB_OUTPUT"
-          echo "aptos_core_ref=$REF"    >> "$GITHUB_OUTPUT"
-          echo "dry_run=${INPUT_DRY_RUN:-false}" >> "$GITHUB_OUTPUT"
+          REF="${INPUT_REF:-move-flow-v${VERSION}}"
+          if [ "${INPUT_DRY_RUN:-false}" != "true" ] && [ "$REF" != "move-flow-v${VERSION}" ]; then
+            echo "::error::Real releases must build from move-flow-v${VERSION}; aptos_core_ref overrides are dry-run only."
+            exit 1
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "aptos_core_ref=$REF"
+            echo "dry_run=${INPUT_DRY_RUN:-false}"
+          } >> "$GITHUB_OUTPUT"
 
           MATRIX=$(cat <<'JSON'
           [
@@ -85,12 +90,11 @@ jobs:
           )
           echo "matrix=$(echo "$MATRIX" | jq -c .)" >> "$GITHUB_OUTPUT"
 
-  # ────────────────────────────────────────────────────────────────────
-  # Job 2: Build move-flow for every selected platform
-  # ────────────────────────────────────────────────────────────────────
   build:
     needs: check
     timeout-minutes: 120
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -121,6 +125,8 @@ jobs:
 
       - name: Checkout release repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Checkout aptos-core
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -129,6 +135,18 @@ jobs:
           ref: ${{ env.APTOS_CORE_REF }}
           path: aptos-core
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate aptos-core source version
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION="$(awk -F'"' '/^\[/{s=$0} s=="[package]" && /^version *=/ {print $2; exit}' \
+            aptos-core/aptos-move/flow/Cargo.toml)"
+          if [ "$SOURCE_VERSION" != "$VERSION" ]; then
+            echo "::error::aptos-core source version '$SOURCE_VERSION' does not match release version '$VERSION'."
+            exit 1
+          fi
 
       - name: Install Linux build deps
         if: runner.os == 'Linux'
@@ -172,8 +190,6 @@ jobs:
           workspaces: aptos-core -> target
           key: ${{ matrix.target }}${{ matrix.compat && '-compat' || '' }}
 
-      # Patch the CPU baseline for compat builds so binaries run on older
-      # CPUs and under emulation (e.g. Docker-on-Mac, qemu).
       - name: Patch CPU baseline for x86 compat
         if: matrix.compat && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
@@ -225,13 +241,46 @@ jobs:
           path: '*.zip'
           if-no-files-found: error
 
-  # ────────────────────────────────────────────────────────────────────
-  # Job 3: Create the GitHub Release with all artifacts
-  # ────────────────────────────────────────────────────────────────────
-  release:
+  generate-plugin:
     needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      # This job runs the release binary, so keep it credential-free.
+      - name: Download Linux x86 artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: move-flow-x86_64-unknown-linux-gnu
+          path: plugin-bin
+
+      - name: Generate plugin tree
+        run: |
+          set -euo pipefail
+          cd plugin-bin
+          unzip -o "move-flow-v${VERSION}-x86_64-unknown-linux-gnu.zip"
+          chmod +x ./move-flow
+          ./move-flow plugin "${RUNNER_TEMP}/plugin"
+          test -f "${RUNNER_TEMP}/plugin/.claude-plugin/plugin.json"
+
+      - name: Upload generated plugin tree
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: move-flow-plugin-tree
+          path: ${{ runner.temp }}/plugin
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [check, build, generate-plugin]
     if: needs.check.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ needs.check.outputs.tag }}
       VERSION: ${{ needs.check.outputs.version }}
@@ -243,6 +292,7 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
+          pattern: move-flow-*-*-*
           path: artifacts
           merge-multiple: true
 
@@ -324,9 +374,6 @@ jobs:
             echo '```'
           } > release_body.md
 
-      # Sign-and-prove that these exact archives were produced by this exact
-      # workflow run on this exact commit. Stored on the repo's Attestations
-      # page and verifiable with: gh attestation verify <file> --repo <owner>/<repo>
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
         with:
@@ -353,3 +400,96 @@ jobs:
           files: |
             artifacts/move-flow-v*.zip
             artifacts/SHA256SUMS
+
+  publish-plugin:
+    needs: [check, generate-plugin, release]
+    if: needs.check.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      APTOS_CORE_REF: ${{ needs.check.outputs.aptos_core_ref }}
+    steps:
+      - name: Gate on GitHub App credentials
+        env:
+          APP_ID: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
+          APP_KEY: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::aptos-ai plugin publisher GitHub App is not configured."
+            exit 1
+          fi
+
+      - name: Generate aptos-ai token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
+          private-key: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_KEY }}
+          owner: aptos-labs
+          repositories: aptos-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      # This job has write credentials; it consumes the generated tree only.
+      - name: Checkout release repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Download generated plugin tree
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: move-flow-plugin-tree
+          path: generated-plugin
+
+      - name: Sync generated plugin tree
+        run: |
+          set -euo pipefail
+          rm -rf plugins/move-flow
+          mkdir -p plugins/move-flow
+          cp -R generated-plugin/. plugins/move-flow/
+
+      - name: Open or update plugin PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git config user.email "aptos-bot@aptos.dev"
+          git config user.name "aptos-bot"
+
+          BRANCH="move-flow/v${VERSION}"
+          REMOTE_BRANCH="refs/heads/${BRANCH}"
+          REMOTE_TRACKING_BRANCH="refs/remotes/origin/${BRANCH}"
+          LEASE="${REMOTE_BRANCH}:"
+          if git fetch origin "+${REMOTE_BRANCH}:${REMOTE_TRACKING_BRANCH}" 2>/dev/null; then
+            LEASE="${REMOTE_BRANCH}:$(git rev-parse "${REMOTE_TRACKING_BRANCH}")"
+          fi
+
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open \
+            --json url,isCrossRepository \
+            --jq 'map(select(.isCrossRepository == false)) | .[0].url // empty' 2>/dev/null || true)
+
+          git checkout -B "$BRANCH"
+          git add plugins/move-flow/
+          if git diff --cached --quiet; then
+            echo "Plugin already up to date."
+            exit 0
+          fi
+
+          git commit \
+            -m "Update move-flow plugin to v${VERSION}" \
+            -m "Generated from aptos-core ${APTOS_CORE_REF}."
+          git push -u origin "$BRANCH" --force-with-lease="$LEASE"
+
+          if [ -z "$EXISTING_PR" ]; then
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "Update move-flow plugin to v${VERSION}" \
+              --body "Regenerated move-flow plugin from aptos-core \`${APTOS_CORE_REF}\` (v${VERSION})."
+          else
+            echo "Updated existing PR: $EXISTING_PR"
+          fi

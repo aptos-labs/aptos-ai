@@ -15,6 +15,7 @@ MoveFlow provides skills, agents, hooks, and an MCP server for developing, testi
 | `/move-inf` | Infer specifications for a Move package |
 | `/move-init` | Initialize Move workflow routing in the project CLAUDE.md |
 | `/move-prove` | Run the Move Prover to formally verify specifications |
+| `/move-replay` | Replay a committed on-chain Aptos transaction locally to debug its outcome. Use when investigating a failed or unexpected transaction, reproducing an abort, or testing a local Move patch against a historical transaction. |
 | `/move-test` | Generate unit tests for Move code. Use for test generation, writing tests, or improving coverage. |
 
 ## Agents
@@ -39,6 +40,7 @@ Provided by the `move-flow` MCP server (configured in `.mcp.json`).
 | `move_package_test` | Run Move unit tests for a package |
 | `move_package_verify` | Verify Move specifications using the Move Prover |
 | `move_package_wp` | Raw WP engine — output requires loop-invariant synthesis and simplification that only the /move-inf skill workflow provides |
+| `move_replay_transaction` | Replay a committed on-chain transaction locally to debug its outcome |
 
 ## Hooks
 
