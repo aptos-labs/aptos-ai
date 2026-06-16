@@ -200,6 +200,7 @@ jobs:
 
       - name: Build move-flow
         working-directory: aptos-core
+        shell: bash
         run: |
           cargo build \
             -p aptos-move-flow \
