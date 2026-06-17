@@ -406,6 +406,7 @@ jobs:
     needs: [check, generate-plugin, release]
     if: needs.check.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
+    environment: move-flow-merger
     permissions:
       contents: read
     env:
@@ -434,6 +435,17 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      - name: Resolve App bot identity
+        id: committer
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          USER_ID="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
       # This job has write credentials; it consumes the generated tree only.
       - name: Checkout release repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
@@ -458,8 +470,8 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          git config user.email "aptos-bot@aptos.dev"
-          git config user.name "aptos-bot"
+          git config user.name "${{ steps.committer.outputs.name }}"
+          git config user.email "${{ steps.committer.outputs.email }}"
 
           BRANCH="move-flow/v${VERSION}"
           REMOTE_BRANCH="refs/heads/${BRANCH}"
