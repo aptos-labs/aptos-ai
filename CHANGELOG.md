@@ -12,4 +12,6 @@ Release body.
 
 ## [Unreleased]
 
-- _No changes yet._
+- Release workflow now regenerates the `move-flow` plugin tree from the
+  matching `aptos-core` source tag and opens or updates the plugin PR in this
+  repository.
