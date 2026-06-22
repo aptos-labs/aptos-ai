@@ -36,15 +36,11 @@ $BinName = "move-flow"
 
 function Write-Info($msg) { Write-Host $msg }
 
-# Under `$ErrorActionPreference = "Stop"`, `Write-Error` is terminating and
-# would tear through the `try { } finally { }` block as an uncaught exception
-# with a stack trace. Write to stderr directly and exit non-zero instead.
 function Fail($msg) {
     [Console]::Error.WriteLine("error: $msg")
     exit 1
 }
 
-# ── Platform detection ──────────────────────────────────────────────
 if (-not $Target) {
     $Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
     switch ($Arch) {
@@ -55,7 +51,6 @@ if (-not $Target) {
     }
 }
 
-# ── Version resolution ──────────────────────────────────────────────
 if (-not $Version) {
     Write-Info "Resolving latest release..."
     $Headers = @{ "User-Agent" = "move-flow-installer" }
@@ -76,7 +71,6 @@ Write-Info "Target:   $Target"
 Write-Info "Version:  $Version"
 Write-Info "Archive:  $Archive"
 
-# ── Workspace ───────────────────────────────────────────────────────
 $TempRoot = [System.IO.Path]::GetTempPath()
 $TempDir  = Join-Path $TempRoot ("move-flow-install-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $TempDir | Out-Null
@@ -91,7 +85,6 @@ try {
     Write-Info "Downloading checksums..."
     Invoke-WebRequest -UseBasicParsing -Uri $SumsUrl -OutFile $SumsPath
 
-    # ── Verify SHA-256 ──────────────────────────────────────────────
     $Sums = Get-Content $SumsPath
     $Expected = $null
     foreach ($line in $Sums) {
@@ -111,7 +104,6 @@ try {
     }
     Write-Info "SHA-256 verified: $Actual"
 
-    # ── Extract + install ───────────────────────────────────────────
     $ExtractDir = Join-Path $TempDir "extracted"
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $ExtractDir -Force
 
@@ -131,7 +123,6 @@ try {
     Write-Info "Installed: $Dest"
     Write-Info "  SHA-256: $InstalledHash"
 
-    # ── PATH hint ───────────────────────────────────────────────────
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $OnPath = $false
     if ($UserPath) {
@@ -142,7 +133,9 @@ try {
     if (-not $OnPath) {
         Write-Info ""
         Write-Info "$InstallDir is not on your user PATH. To add it:"
-        Write-Info "  [Environment]::SetEnvironmentVariable('Path', `"`$env:Path;$InstallDir`", 'User')"
+        Write-Info "  `$UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')"
+        Write-Info "  `$NewPath = `"`$UserPath;$InstallDir`".Trim(';')"
+        Write-Info "  [Environment]::SetEnvironmentVariable('Path', `$NewPath, 'User')"
         Write-Info "Then restart your shell."
     }
 
