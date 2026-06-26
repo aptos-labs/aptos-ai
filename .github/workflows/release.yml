@@ -415,7 +415,7 @@ jobs:
     steps:
       - name: Gate on GitHub App credentials
         env:
-          APP_ID: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
+          APP_ID: ${{ vars.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
           APP_KEY: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_KEY }}
         run: |
           set -euo pipefail
@@ -428,7 +428,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
+          app-id: ${{ vars.APTOS_AI_PLUGIN_PUBLISHER_APP_ID }}
           private-key: ${{ secrets.APTOS_AI_PLUGIN_PUBLISHER_APP_KEY }}
           owner: aptos-labs
           repositories: aptos-ai
