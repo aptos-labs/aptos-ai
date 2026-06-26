@@ -23,6 +23,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_INCREMENTAL: 0
   CARGO_NET_RETRY: 10
@@ -82,8 +86,8 @@ jobs:
             {"name":"macOS ARM",        "runner":"macos-latest",     "target":"aarch64-apple-darwin"},
             {"name":"Linux x86",        "runner":"ubuntu-24.04",     "target":"x86_64-unknown-linux-gnu"},
             {"name":"Linux ARM",        "runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu"},
-            {"name":"Linux x86 compat", "runner":"ubuntu-latest",    "target":"x86_64-unknown-linux-gnu",  "compat":true, "container":"ubuntu:20.04"},
-            {"name":"Linux ARM compat", "runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "compat":true, "container":"ubuntu:20.04"},
+            {"name":"Linux x86 compat", "runner":"ubuntu-latest",    "target":"x86_64-unknown-linux-gnu",  "compat":true, "container":"ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214"},
+            {"name":"Linux ARM compat", "runner":"ubuntu-24.04-arm", "target":"aarch64-unknown-linux-gnu", "compat":true, "container":"ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214"},
             {"name":"Windows x86",      "runner":"windows-2025",     "target":"x86_64-pc-windows-msvc"}
           ]
           JSON
@@ -188,7 +192,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
         with:
           workspaces: aptos-core -> target
-          key: ${{ matrix.target }}${{ matrix.compat && '-compat' || '' }}
+          key: release-${{ matrix.target }}${{ matrix.compat && '-compat' || '' }}
 
       - name: Patch CPU baseline for x86 compat
         if: matrix.compat && matrix.target == 'x86_64-unknown-linux-gnu'
@@ -289,6 +293,8 @@ jobs:
     steps:
       - name: Checkout release repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -446,7 +452,6 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      # This job has write credentials; it consumes the generated tree only.
       - name: Checkout release repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
@@ -468,10 +473,12 @@ jobs:
       - name: Open or update plugin PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          COMMITTER_NAME: ${{ steps.committer.outputs.name }}
+          COMMITTER_EMAIL: ${{ steps.committer.outputs.email }}
         run: |
           set -euo pipefail
-          git config user.name "${{ steps.committer.outputs.name }}"
-          git config user.email "${{ steps.committer.outputs.email }}"
+          git config user.name  "$COMMITTER_NAME"
+          git config user.email "$COMMITTER_EMAIL"
 
           BRANCH="move-flow/v${VERSION}"
           REMOTE_BRANCH="refs/heads/${BRANCH}"
