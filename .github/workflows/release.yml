@@ -347,9 +347,6 @@ jobs:
             echo ""
             echo "# Windows (PowerShell)"
             echo "irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.ps1 | iex"
-            echo ""
-            echo "# cargo-binstall"
-            echo "cargo binstall aptos-move-flow"
             echo '```'
             echo ""
             echo "### Downloads"

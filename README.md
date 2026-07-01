@@ -1,127 +1,148 @@
-# Aptos AI (BETA)
+# Aptos AI
 
-Plugins and integrations for AI coding assistants working with the Aptos
-blockchain and the Move language. Currently supports Claude Code, with other
-platforms planned.
+Aptos AI hosts plugins and integrations for AI coding assistants that work with
+Aptos and the Move language.
 
-## Available Plugins
+## Plugins
 
-| Plugin | Description | Platforms |
-|--------|-------------|-----------|
-| [MoveFlow](https://github.com/aptos-labs/aptos-core/tree/main/aptos-move/flow) | Move smart contract development — MCP tools, edit hooks, agents, and skills for the Move language and Move Prover | Claude Code |
+| Plugin | Status | Platform | Description |
+|--------|--------|----------|-------------|
+| [MoveFlow](#moveflow) | Available | Claude Code | Move smart contract development on Aptos |
 
-## Claude Code
+## MoveFlow
 
-### Prerequisites
+[MoveFlow][move-flow] is a Claude Code plugin for Move smart contract
+development on Aptos. It provides:
 
-The `move-flow` binary must be on your `$PATH`. Pick one of:
+- MCP tools for package status, tests, coverage, verification, and transaction
+  replay.
+- Skills for Move development, compilation fixes, test generation, spec
+  inference, and formal verification.
+- Agents for longer Move workflows.
+- Hooks that check and format `.move` files after edits.
+
+### Quick Start
+
+Install the `move-flow` binary first. The Claude Code plugin expects it on
+`$PATH`; alternatively, set `MOVE_FLOW` to the binary path.
 
 **Unix (Linux + macOS)**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aptos-labs/aptos-ai/main/install.sh | sh
 ```
 
 **Windows (PowerShell)**
+
 ```powershell
 irm https://raw.githubusercontent.com/aptos-labs/aptos-ai/main/install.ps1 | iex
 ```
 
-**cargo-binstall** (no compile, downloads the prebuilt binary)
+Confirm the binary is available:
+
 ```bash
-cargo binstall aptos-move-flow
+move-flow --help
 ```
 
-**Build from source** — from a local [aptos-core](https://github.com/aptos-labs/aptos-core) checkout:
-```bash
-cargo install --path aptos-core/aptos-move/flow --locked --profile cli
+Then install the Claude Code marketplace and plugin:
+
+```text
+/plugin marketplace add aptos-labs/aptos-ai
+/plugin install move-flow@aptos-ai
 ```
 
-Prebuilt binaries are published as GitHub Releases on this repo. Every archive
-is listed in a `SHA256SUMS` file alongside it. See
-[Releases](https://github.com/aptos-labs/aptos-ai/releases) for direct downloads.
-The release workflow consumes the matching `move-flow-v<version>` tag from
-`aptos-core` and regenerates the `plugins/move-flow/` marketplace tree from the
-built binary.
+Inside a Move project, run:
 
-**Verifying provenance.** Every release is signed by GitHub's sigstore-backed
-build provenance attestation — proof the archive was produced by *this exact
-workflow* on *this exact commit*. To verify a downloaded archive:
+```text
+/move-init
+```
+
+### Install Options
+
+Use the installer when possible. To pin a version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aptos-labs/aptos-ai/main/install.sh | \
+  sh -s -- --version 1.0.4
+```
+
+```powershell
+irm https://raw.githubusercontent.com/aptos-labs/aptos-ai/main/install.ps1 `
+  -OutFile install.ps1
+.\install.ps1 -Version 1.0.4
+```
+
+Other options:
+
+- Build from a local [aptos-core][aptos-core] checkout:
+  ```bash
+  cargo install --path aptos-core/aptos-move/flow --locked --profile cli
+  ```
+- [GitHub Releases][releases] contains direct downloads and `SHA256SUMS`.
+
+Direct Git installs through Cargo and cargo-binstall are not supported today.
+Use the installer, direct release downloads, or a local `aptos-core` checkout.
+
+### Claude Code Commands
+
+| Capability | Skill | Agent |
+|------------|-------|-------|
+| Initialize project routing | `/move-init` | |
+| General Move help | `/move` | |
+| Compilation diagnostics | `/move-check` | `move-check` |
+| Spec inference | `/move-inf` | `move-inf` |
+| Formal verification | `/move-prove` | `move-verify` |
+| Unit test generation | `/move-test` | `move-test` |
+| Transaction replay | `/move-replay` | |
+
+### Supported Binaries
+
+| Platform | Architecture | Notes |
+|----------|--------------|-------|
+| macOS | x86_64 (Intel) | |
+| macOS | aarch64 (Apple Silicon) | |
+| Linux | x86_64 | glibc from the build runner, currently 2.39 |
+| Linux | aarch64 | glibc from the build runner, currently 2.39 |
+| Linux | x86_64 compat | Built on Ubuntu 20.04, baseline `x86-64-v2` |
+| Linux | aarch64 compat | Built on Ubuntu 20.04 |
+| Windows | x86_64 | |
+
+The Unix installer selects the compat build when it detects an older glibc
+version (< 2.34) or an x86_64 CPU/emulator without AVX2 in `/proc/cpuinfo`.
+Use compat builds on older distros or when running Linux under Docker-on-Mac.
+
+> **Running x86_64 containers on Apple Silicon?**
+> The compat build requires SSE4.2. Docker Desktop and OrbStack default to
+> Rosetta 2 for amd64 emulation on Apple Silicon, which exposes SSE4.2.
+> Colima, Lima, and Podman Machine default to qemu-user with the `qemu64`
+> CPU model, which only goes up to SSE3. Switch the runtime to Rosetta 2 or
+> override qemu's CPU model, for example `colima start --cpu-type max`.
+
+### Verify Downloads
+
+Each release publishes a `SHA256SUMS` file next to the archives. Releases also
+include GitHub's sigstore-backed build provenance attestation.
+
+To verify a downloaded archive:
 
 ```bash
 gh attestation verify move-flow-v1.0.4-x86_64-apple-darwin.zip \
   --repo aptos-labs/aptos-ai
 ```
 
-A successful verification prints the source commit, workflow path, and
-runner identity. Failure aborts non-zero.
+Successful attestation verification prints the source commit, workflow path,
+and runner identity.
 
-**Supported platforms**
+### Releases
 
-| Platform | Architecture | Notes |
-|----------|--------------|-------|
-| macOS    | x86_64 (Intel) | |
-| macOS    | aarch64 (Apple Silicon) | |
-| Linux    | x86_64 | glibc from the build runner (currently 2.39) |
-| Linux    | aarch64 | glibc from the build runner (currently 2.39) |
-| Linux    | x86_64 — compat | Built on Ubuntu 20.04, baseline `x86-64-v2`. Use on older distros or Docker-on-Mac. |
-| Linux    | aarch64 — compat | Built on Ubuntu 20.04. Use on older distros. |
-| Windows  | x86_64 | |
+Released binaries are built from the matching `move-flow-v<version>` tag in
+[`aptos-labs/aptos-core`][move-flow]. The release workflow also regenerates the
+`plugins/move-flow/` marketplace tree from the built binary.
 
-The Unix installer auto-selects the compat build when it detects old glibc
-(< 2.34) or an x86_64 CPU/emulator that doesn't advertise AVX2 in
-`/proc/cpuinfo` (old hardware, Rosetta 2, default qemu-user).
+## Support
 
-> **Running x86_64 containers on Apple Silicon?**
-> The compat build is pinned to `x86-64-v2`, which requires **SSE4.2**.
-> Docker Desktop and OrbStack default to **Rosetta 2** for amd64 emulation
-> on Apple Silicon — Rosetta 2 exposes SSE4.2, so the compat build works.
-> Colima / Lima / Podman Machine default to **qemu-user with the `qemu64`
-> CPU model**, which only goes up to SSE3. To run the compat build there,
-> either switch the runtime to Rosetta 2 or override qemu's CPU model
-> (e.g. `colima start --cpu-type max`, `lima ... cpuType: "max"`).
+Use GitHub issues to report bugs or request changes.
 
-### Install the Marketplace
-
-```
-/plugin marketplace add aptos-labs/aptos-ai
-```
-
-### Start Flowing
-
-```
-/plugin install move-flow@aptos-ai
-```
-
-After installing, run `/move-init` to set up your project for Move development. Then try:
-
-```
-❯ What can you do with Move?                                                                                                                                                                                                   
-                                                                                                                                                                                                                          
-● Here's what I can help with for Move development:                                                                                                                                                                         
-                                                                                                                                                                                                                          
-  Skills / Agents available:                                                                                                                                                                                                
-   
-  ┌────────────────────────────────────────────────────────────────────┬─────────────┬─────────────┐                                                                                                                        
-  │                             Capability                             │    Skill    │    Agent    │                                                                                                                      
-  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤
-  │ Spec inference — infer specifications, generate specs, WP analysis │ /move-inf   │ move-inf    │
-  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤
-  │ Verification — prove, run prover, check specifications             │ /move-prove │ move-verify │                                                                                                                        
-  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
-  │ Testing — generate unit tests, improve coverage                    │ /move-test  │ move-test   │                                                                                                                        
-  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
-  │ Fix compilation — diagnose and fix compile errors                  │ /move-check │ move-check  │                                                                                                                      
-  ├────────────────────────────────────────────────────────────────────┼─────────────┼─────────────┤                                                                                                                        
-  │ General Move — language reference, writing/reading/explaining code │ /move       │ —           │
-  └────────────────────────────────────────────────────────────────────┴─────────────┴─────────────┘                                                                                                                        
-                                                                                                                                                                                                                          
-  General development tasks:                                                                                                                                                                                                
-                                                                                                                                                                                                                          
-  - Write new Move modules, functions, and structs                                                                                                                                                                          
-  - Read and explain existing Move code
-  - Refactor Move code (using Move 2 syntax per your preferences)                                                                                                                                                           
-  - Add loop invariants, pre/post conditions, and other formal specs                                                                                                                                                        
-  - Debug failing tests or prover errors                                                                                                                                                                                    
-```
-
-Please report any oddities and feature suggestions to `#move-eng`! 
+[aptos-core]: https://github.com/aptos-labs/aptos-core
+[move-flow]: https://github.com/aptos-labs/aptos-core/tree/main/aptos-move/flow
+[releases]: https://github.com/aptos-labs/aptos-ai/releases
