@@ -159,8 +159,8 @@ jobs:
       - name: Install macOS build deps
         if: runner.os == 'macOS'
         run: |
-          brew install pkg-config openssl cmake llvm lld
-          OPENSSL_PREFIX="$(brew --prefix openssl)"
+          brew install pkg-config openssl@3 cmake llvm lld
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           echo "OPENSSL_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${OPENSSL_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
 
